@@ -383,7 +383,7 @@ let diff_and_rename current_file =
         (changes, Some old_file, Some solver_data, version_map, max_ids)
       end else begin
         let (version_map, max_ids) = VersionLookup.create_map current_file in
-        (CompareAST.empty_change_info (), None, None, version_map, max_ids)
+        (CompareCFG.empty_change_info (), None, None, version_map, max_ids)
       end
     in
     if GobConfig.get_bool "incremental.save" then begin

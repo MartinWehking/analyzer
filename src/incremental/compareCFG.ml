@@ -196,11 +196,10 @@ let reexamine f1 f2 stdSet diffSet (module Cfg1 : CfgForward) (module Cfg2 : Cfg
     dfs2 (FunctionEntry f2) (NodeSet.empty, NodeSet.empty) in
   let (sameNodes, primRemovedNodes, removedNodes) =
     let rec dfs1 node (sameNodes, primRemovedNodes, removedNodes) =
-      let classify k (same, primRemoved, removed) = match k with
-        | Function d -> (same, primRemoved, removed) (* leave out regular back-edge from return statement to function node  *)
-        | _ -> if NodeSet.mem k primRemoved || NodeSet.mem k removed then (same, primRemoved, removed)
-          else if NodeNodeSet.exists (fun (n1,_) -> Node.equal n1 k) same then (NodeNodeSet.filter (fun (n1,_) -> not (Node.equal n1 k)) same, NodeSet.add k primRemoved, NodeSet.add k removed)
-          else dfs1 k (same, primRemoved, NodeSet.add k removed) in
+      let classify k (same, primRemoved, removed) =
+        if NodeSet.mem k primRemoved || NodeSet.mem k removed then (same, primRemoved, removed)
+        else if NodeNodeSet.exists (fun (n1,_) -> Node.equal n1 k) same then (NodeNodeSet.filter (fun (n1,_) -> not (Node.equal n1 k)) same, NodeSet.add k primRemoved, NodeSet.add k removed)
+        else dfs1 k (same, primRemoved, NodeSet.add k removed) in
       let succ = List.map snd (Cfg1.next node) in
       List.fold_right classify succ (sameNodes, primRemovedNodes, removedNodes) in
     NodeSet.fold dfs1 diffNodes1 (sameNodes, diffNodes1, diffNodes1) in

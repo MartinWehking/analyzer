@@ -39,9 +39,8 @@ let eq_instr' (a: instr) (b: instr) = match a, b with
   | VarDecl (v1, _l1), VarDecl (v2, _l2) -> eq_varinfo' v1 v2
   | _, _ -> false
 
-(* in contrast to the similar method eq_stmtkind in CompareAST,
-this method does not compare the inner body, that is sub blocks,
-of if and switch statements *)
+(* in contrast to the similar method eq_stmtkind in CompareAST, this method does not compare the inner body,
+that is sub blocks, of if and switch statements *)
 let eq_stmtkind' ((a, af): stmtkind * fundec) ((b, bf): stmtkind * fundec) =
   let eq_block' = fun x y -> eq_block (x, af) (y, bf) in
   match a, b with
@@ -111,25 +110,24 @@ let compareCfgs (module Cfg1 : CfgForward) (module Cfg2 : CfgForward) fun1 fun2 
       let outList2 = Cfg2.next fromNode2 in
 
       let findEquiv (edgeList1, toNode1) =
-        let aux (locEdgeList2, toNode2) b = if b then b else
-          let edgeList2 = to_edge_list locEdgeList2 in
-          if eq_node (toNode1, fun1) (toNode2, fun2) && eq_edge_list edgeList1 edgeList2 then
-            let notIn, matchedAlready =
-              Hashtbl.fold (fun (toNode1', toNode2') v (ni, nm) ->
-                let node1equal = Node.equal toNode1 toNode1' in
-                let node2equal = Node.equal toNode2 toNode2' in
-                (ni && not (node1equal && node2equal), nm || (node1equal && not node2equal))) same (true, false) in
-            if matchedAlready then false
-            else
-              begin
-                if notIn then Queue.add (toNode1, toNode2) waitingList;
-                Hashtbl.replace same (toNode1, toNode2) ();
-                true
-              end
-          else false in
-        let found = List.fold_right aux outList2 false in
-        if not found then Hashtbl.replace diff toNode1 () in
-
+        let rec aux remSuc = match remSuc with
+          | [] -> Hashtbl.replace diff toNode1 ()
+          | (locEdgeList2, toNode2)::remSuc' ->
+              let edgeList2 = to_edge_list locEdgeList2 in
+              if eq_node (toNode1, fun1) (toNode2, fun2) && eq_edge_list edgeList1 edgeList2 then
+                begin
+                  let notInSame, matchedAlready =
+                    Hashtbl.fold (fun (toNode1', toNode2') v (ni, ma) ->
+                      let n1equal = Node.equal toNode1 toNode1' in
+                      let n2equal = Node.equal toNode2 toNode2' in
+                      (ni && not (n1equal && n2equal), ma || (n1equal && not n2equal))) same (true, false) in
+                  if matchedAlready then Hashtbl.replace diff toNode1 ()
+                  else Hashtbl.replace same (toNode1, toNode2) ();
+                  if notInSame then Queue.add (toNode1, toNode2) waitingList;
+                  Hashtbl.replace same (toNode1, toNode2) ()
+                end
+              else aux remSuc' in
+        aux outList2 in
       let iterOuts (locEdgeList1, toNode1) =
         let edgeList1 = to_edge_list locEdgeList1 in
         (* Differentiate between a possibly duplicate Test(1,false) edge and a single occurence. In the first

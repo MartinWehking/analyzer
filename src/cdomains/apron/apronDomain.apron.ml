@@ -3,6 +3,7 @@ open Cil
 open Pretty
 (* A binding to a selection of Apron-Domains *)
 open Apron
+open RelationDomain
 
 module BI = IntOps.BigIntOps
 
@@ -24,7 +25,6 @@ let widening_thresholds_apron = lazy (
 module Var =
 struct
   include Var
-
   let equal x y = Var.compare x y = 0
 end
 
@@ -200,7 +200,7 @@ struct
 
   let texpr1_of_cil_exp d env e =
     let e = Cil.constFold false e in
-    Texpr1.of_expr env (texpr1_expr_of_cil_exp d env e)
+    of_expr env (texpr1_expr_of_cil_exp d env e)
 
   let tcons1_of_cil_exp d env e negate =
     let e = Cil.constFold false e in
@@ -235,7 +235,7 @@ struct
         (texpr1_plus, texpr1_minus, typ)
     in
     let texpr1' = Binop (Sub, texpr1_plus, texpr1_minus, Int, Near) in
-    Tcons1.make (Texpr1.of_expr env texpr1') typ
+    make (of_expr env texpr1') typ
 end
 
 
@@ -497,6 +497,7 @@ struct
 
   let of_lincons_array (a: Apron.Lincons1.earray) =
     A.of_lincons_array Man.mgr a.array_env a
+    let unify (a:t) (b:t) = A.unify Man.mgr a b
 end
 
 
@@ -885,8 +886,10 @@ type ('a, 'b) aproncomponents_t = { apr : 'a; priv : 'b; } [@@deriving eq, ord, 
 
 module D2 (Man: Manager) : S2 with module Man = Man =
 struct
+  type var = Var.t
   include DWithOps (Man) (DHetero (Man))
   module Man = Man
+<<<<<<< HEAD
 end
 
 module ApronComponents (D2: S2) (PrivD: Lattice.S):
@@ -999,3 +1002,6 @@ struct
   let return = make_var Return
   let global g = make_var (Global g)
 end
+=======
+end
+>>>>>>> Add common interface for apron + new domain

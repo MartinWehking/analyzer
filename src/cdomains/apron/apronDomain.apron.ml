@@ -3,6 +3,7 @@ open Cil
 open Pretty
 (* A binding to a selection of Apron-Domains *)
 open Apron
+open RelationDomain
 
 module BI = IntOps.BigIntOps
 
@@ -24,7 +25,6 @@ let widening_thresholds_apron = lazy (
 module Var =
 struct
   include Var
-
   let equal x y = Var.compare x y = 0
 end
 
@@ -204,7 +204,7 @@ struct
 
   let texpr1_of_cil_exp d env e =
     let e = Cil.constFold false e in
-    Texpr1.of_expr env (texpr1_expr_of_cil_exp d env e)
+    of_expr env (texpr1_expr_of_cil_exp d env e)
 
   let tcons1_of_cil_exp d env e negate =
     let e = Cil.constFold false e in
@@ -239,7 +239,7 @@ struct
         (texpr1_plus, texpr1_minus, typ)
     in
     let texpr1' = Binop (Sub, texpr1_plus, texpr1_minus, Int, Near) in
-    Tcons1.make (Texpr1.of_expr env texpr1') typ
+    make (of_expr env texpr1') typ
 end
 
 
@@ -501,6 +501,7 @@ struct
 
   let of_lincons_array (a: Apron.Lincons1.earray) =
     A.of_lincons_array Man.mgr a.array_env a
+    let unify (a:t) (b:t) = A.unify Man.mgr a b
 end
 
 
@@ -884,118 +885,7 @@ type ('a, 'b) aproncomponents_t = { apr : 'a; priv : 'b; } [@@deriving eq, ord, 
 
 module D2 (Man: Manager) : S2 with module Man = Man =
 struct
+  type var = Var.t
   include DWithOps (Man) (DHetero (Man))
   module Man = Man
-end
-
-module ApronComponents (D2: S2) (PrivD: Lattice.S):
-sig
-  module AD: S2 with type Man.mt = D2.Man.mt
-  include Lattice.S with type t = (D2.t, PrivD.t) aproncomponents_t
-  val op_scheme: (D2.t -> D2.t -> D2.t) -> (PrivD.t -> PrivD.t -> PrivD.t) -> t -> t -> t
-end =
-struct
-  module AD = D2
-  type t = (D2.t, PrivD.t) aproncomponents_t [@@deriving eq, ord, to_yojson]
-
-  include Printable.Std
-  open Pretty
-  let hash (r: t)  = D2.hash r.apr + PrivD.hash r.priv * 33
-
-  let show r =
-    let first  = D2.show r.apr in
-    let third  = PrivD.show r.priv in
-    "(" ^ first ^ ", " ^ third  ^ ")"
-
-  let pretty () r =
-    text "(" ++
-    D2.pretty () r.apr
-    ++ text ", " ++
-    PrivD.pretty () r.priv
-    ++ text ")"
-
-  let printXml f r =
-    BatPrintf.fprintf f "<value>\n<map>\n<key>\n%s\n</key>\n%a<key>\n%s\n</key>\n%a</map>\n</value>\n" (Goblintutil.escape (D2.name ())) D2.printXml r.apr (Goblintutil.escape (PrivD.name ())) PrivD.printXml r.priv
-
-  let name () = D2.name () ^ " * " ^ PrivD.name ()
-
-  let invariant c {apr; priv} =
-    Invariant.(D2.invariant c apr && PrivD.invariant c priv)
-
-  let of_tuple(apr, priv):t = {apr; priv}
-  let to_tuple r = (r.apr, r.priv)
-
-  let arbitrary () =
-    let tr = QCheck.pair (D2.arbitrary ()) (PrivD.arbitrary ()) in
-    QCheck.map ~rev:to_tuple of_tuple tr
-
-  let bot () = {apr = D2.bot (); priv = PrivD.bot ()}
-  let is_bot {apr; priv} = D2.is_bot apr && PrivD.is_bot priv
-  let top () = {apr = D2.top (); priv = PrivD.bot ()}
-  let is_top {apr; priv} = D2.is_top apr && PrivD.is_top priv
-
-  let leq {apr=x1; priv=x3 } {apr=y1; priv=y3} =
-    D2.leq x1 y1 && PrivD.leq x3 y3
-
-  let pretty_diff () (({apr=x1; priv=x3}:t),({apr=y1; priv=y3}:t)): Pretty.doc =
-    if not (D2.leq x1 y1) then
-      D2.pretty_diff () (x1,y1)
-    else
-      PrivD.pretty_diff () (x3,y3)
-
-  let op_scheme op1 op3 {apr=x1; priv=x3} {apr=y1; priv=y3}: t =
-    {apr = op1 x1 y1; priv = op3 x3 y3 }
-  let join = op_scheme D2.join PrivD.join
-  let meet = op_scheme D2.meet PrivD.meet
-  let widen = op_scheme D2.widen PrivD.widen
-  let narrow = op_scheme D2.narrow PrivD.narrow
-end
-
-
-module type VarMetadata =
-sig
-  type t
-  val var_name: t -> string
-end
-
-module VarMetadataTbl (VM: VarMetadata) =
-struct
-  module VH = Hashtbl.Make (Var)
-
-  let vh = VH.create 113
-
-  let make_var ?name metadata =
-    let name = Option.default_delayed (fun () -> VM.var_name metadata) name in
-    let var = Var.of_string name in
-    VH.replace vh var metadata;
-    var
-
-  let find_metadata var =
-    VH.find_option vh var
-end
-
-module VM =
-struct
-  type t =
-    | Local (** Var for function local variable (or formal argument). *) (* No varinfo because local Var with the same name may be in multiple functions. *)
-    | Arg (** Var for function formal argument entry value. *) (* No varinfo because argument Var with the same name may be in multiple functions. *)
-    | Return (** Var for function return value. *)
-    | Global of varinfo
-
-  let var_name = function
-    | Local -> failwith "var_name of Local"
-    | Arg -> failwith "var_name of Arg"
-    | Return -> "#ret"
-    | Global g -> g.vname
-end
-
-module V =
-struct
-  include VarMetadataTbl (VM)
-  open VM
-
-  let local x = make_var ~name:x.vname Local
-  let arg x = make_var ~name:(x.vname ^ "'") Arg (* TODO: better suffix, like #arg *)
-  let return = make_var Return
-  let global g = make_var (Global g)
 end

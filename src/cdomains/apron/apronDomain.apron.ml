@@ -739,7 +739,7 @@ end
 
 module D2 (Man: Manager) : RelD2 with type var = Var.t =
 struct
-  type var = Var.t
+  type var = EnvDomain.Var.t
   include DWithOps (Man) (DHetero (Man))
   module Man = Man
 end

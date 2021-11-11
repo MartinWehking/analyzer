@@ -9,20 +9,19 @@ module SpecFunctor (CPriv: ApronPriv.SharedS) (RD: RelationDomain.RD) : Analyses
 struct
   include Analyses.DefaultSpec
 
-  let name () = "apron"
 
   module AD = RD.D2
+
+  let name () = AD.name ()
   module Priv = CPriv (RD)
   module D = RelationDomain.RelComponent (AD) (Priv.D)
   module G = Priv.G
   module C = D
-  module V = Priv.V
-
-  open AD
-  open (ApronDomain: (sig module V: (module type of ApronDomain.V) end)) (* open only V from ApronDomain (to shadow V of Spec), but don't open D (to not shadow D here) *)
+  module V = RelationDomain.V (RD.Var)
+  module VTemp = Priv.V
 
   open ApronPrecCompareUtil
-  (* Result map used for comparison of results *)
+
   let results = RH.create 103
 
   let should_join = Priv.should_join
@@ -217,7 +216,6 @@ struct
 
   let return ctx e f =
     let st = ctx.local in
-    let ask = Analyses.ask_of_ctx ctx in
     let new_apr =
       if AD.type_tracked (Cilfacade.fundec_return_type f) then (
         let apr' = AD.add_vars st.apr [V.return] in
@@ -237,15 +235,8 @@ struct
       |> List.filter AD.varinfo_tracked
       |> List.map V.local
     in
-
     AD.remove_vars_with new_apr local_vars;
-    let st' = {st with apr = new_apr} in
-    begin match ThreadId.get_current ask with
-      | `Lifted tid when ThreadReturn.is_current ask ->
-        Priv.thread_return ask ctx.global ctx.sideg tid st'
-      | _ ->
-        st'
-    end
+    {st with apr = new_apr}
 
   let combine ctx r fe f args fc fun_st =
     let st = ctx.local in
@@ -297,13 +288,6 @@ struct
       unify_st
 
   let special ctx r f args =
-    let ask = Analyses.ask_of_ctx ctx in
-    let invalidate_one st lv =
-      assign_to_global_wrapper ask ctx.global ctx.sideg st lv (fun st v ->
-          let apr' = AD.forget_vars st.apr [V.local v] in
-          assert_type_bounds apr' v (* re-establish type bounds after forget *)
-        )
-    in
     let st = ctx.local in
     match LibraryFunctions.classify f.vname args with
     (* TODO: assert handling from https://github.com/goblint/analyzer/pull/278 *)
@@ -311,14 +295,6 @@ struct
     | `Unknown "__goblint_check" -> st
     | `Unknown "__goblint_commit" -> st
     | `Unknown "__goblint_assert" -> st
-    | `ThreadJoin (id,retvar) ->
-      (* nothing to invalidate as only arguments that have their AddrOf taken may be invalidated *)
-      (
-        let st' = Priv.thread_join ask ctx.global id st in
-        match r with
-        | Some lv -> invalidate_one st' lv
-        | None -> st'
-      )
     | _ ->
       let ask = Analyses.ask_of_ctx ctx in
       let invalidate_one st lv =
@@ -407,75 +383,11 @@ struct
       st
 
   let sync ctx reason =
-    (* After the solver is finished, store the results (for later comparison) *)
-    if !GU.postsolving then begin
-      let old_value = RH.find_default results ctx.node (AD.bot ()) in
-      let new_value = AD.join old_value ctx.local.apr in
-      RH.replace results ctx.node new_value;
-    end;
     Priv.sync (Analyses.ask_of_ctx ctx) ctx.global ctx.sideg ctx.local (reason :> [`Normal | `Join | `Return | `Init | `Thread])
 
   let init marshal =
     Priv.init ()
 
-  module OctApron = ApronPrecCompareUtil.OctagonD
-  let store_data file =
-    let convert (m: AD.t RH.t): OctApron.t RH.t =
-      let convert_single (a: AD.t): OctApron.t =
-        let generator = AD.to_lincons_array a in
-        OctApron.of_lincons_array generator
-      in
-      RH.map (fun _ -> convert_single) m
-    in
-    let post_process m =
-      let m = convert m in
-      RH.map (fun _ v -> OctApron.marshal v) m
-    in
-    let results = post_process results in
-    let name = name () ^ "(domain: " ^ (AD.Man.name ()) ^ ", privatization: " ^ (Priv.name ()) ^ ")" in
-    let results: ApronPrecCompareUtil.dump = {marshalled = results; name } in
-    Serialize.marshal results file
-
   let finalize () =
-    let file = GobConfig.get_string "exp.apron.prec-dump" in
-    if file <> "" then begin
-      store_data file
-    end;
     Priv.finalize ()
 end
-open RelationAnalysis
-let spec_module: (module MCPSpec) Lazy.t =
-  lazy (
-    let open ApronDomain in
-    let module Man = (val ApronDomain.get_manager ()) in
-    let module AD = ApronDomain.D2 (Man) in
-    let module RD: RelationDomain.RD =
-      struct
-        module Var = EnvDomain.Var
-        module D2 = AD
-      end in
-    let module Priv = (val ApronPriv.get_priv ()) in
-    let module Spec = SpecFunctor (Priv) (RD) in
-    (module Spec)
-  )
-
-let get_spec (): (module MCPSpec) =
-  Lazy.force spec_module
-
-let after_config () =
-  let module Spec = (val get_spec ()) in
-  MCP.register_analysis (module Spec : MCPSpec);
-  GobConfig.set_string "ana.path_sens[+]"  (Spec.name ())
-
-let _ =
-  AfterConfig.register after_config
-
-
-let () =
-  Printexc.register_printer
-    (function
-      | Apron.Manager.Error e ->
-        let () = Apron.Manager.print_exclog Format.str_formatter e in
-        Some(Printf.sprintf "Apron.Manager.Error\n %s" (Format.flush_str_formatter ()))
-      | _ -> None (* for other exceptions *)
-    )

@@ -278,11 +278,7 @@ struct
         | _ -> false (* remove everything else (globals, global privs) *)
       )
     in
-<<<<<<< HEAD
-    let unify_apr = ApronDomain.A.unify Man.mgr new_apr new_fun_apr in (* TODO: unify_with *)
-=======
     let unify_apr = AD.unify new_apr new_fun_apr in (* TODO: unify_with *)
->>>>>>> Add common interface for apron + new domain
     if M.tracing then M.tracel "combine" "apron unifying %a %a = %a\n" AD.pretty new_apr AD.pretty new_fun_apr AD.pretty unify_apr;
     let unify_st = {fun_st with apr = unify_apr} in
     if AD.type_tracked (Cilfacade.fundec_return_type f) then (
@@ -300,169 +296,41 @@ struct
     else
       unify_st
 
-  let special ctx r f args =
-    let ask = Analyses.ask_of_ctx ctx in
-    let invalidate_one st lv =
-      assign_to_global_wrapper ask ctx.global ctx.sideg st lv (fun st v ->
-          let apr' = AD.forget_vars st.apr [V.local v] in
-          assert_type_bounds apr' v (* re-establish type bounds after forget *)
-        )
-    in
-    let st = ctx.local in
-    match LibraryFunctions.classify f.vname args with
-    (* TODO: assert handling from https://github.com/goblint/analyzer/pull/278 *)
-    | `Assert expression -> st
-    | `Unknown "__goblint_check" -> st
-    | `Unknown "__goblint_commit" -> st
-    | `Unknown "__goblint_assert" -> st
-    | `ThreadJoin (id,retvar) ->
-      (* nothing to invalidate as only arguments that have their AddrOf taken may be invalidated *)
-      (
-        let st' = Priv.thread_join ask ctx.global id st in
-        match r with
-        | Some lv -> invalidate_one st' lv
-        | None -> st'
-      )
-    | _ ->
-      let ask = Analyses.ask_of_ctx ctx in
-      let invalidate_one st lv =
-        assign_to_global_wrapper ask ctx.global ctx.sideg st lv (fun st v ->
-            let apr' = AD.forget_vars st.apr [V.local v] in
-            assert_type_bounds apr' v (* re-establish type bounds after forget *)
-          )
-      in
-      let st' = match LibraryFunctions.get_invalidate_action f.vname with
-        | Some fnc -> st (* nothing to do because only AddrOf arguments may be invalidated *)
-        | None ->
-          if GobConfig.get_bool "sem.unknown_function.invalidate.globals" then (
-            let globals = foldGlobals !Cilfacade.current_file (fun acc global ->
-                match global with
-                | GVar (vi, _, _) when not (BaseUtil.is_static vi) ->
-                  (Var vi, NoOffset) :: acc
-                (* TODO: what about GVarDecl? *)
-                | _ -> acc
-              ) []
-            in
-            List.fold_left invalidate_one st globals
-          )
-          else
-            st
-      in
-      (* invalidate lval if present *)
-      match r with
-      | Some lv -> invalidate_one st' lv
-      | None -> st'
-
-
-  let query ctx (type a) (q: a Queries.t): a Queries.result =
-    let open Queries in
-    let st = ctx.local in
-    let eval_int e =
-      read_from_globals_wrapper
-        (Analyses.ask_of_ctx ctx)
-        ctx.global st e
-        (fun apr' e' -> AD.eval_int apr' e')
-    in
-    match q with
-    | EvalInt e ->
-      if M.tracing then M.traceli "evalint" "apron query %a\n" d_exp e;
-      let r = eval_int e in
-      if M.tracing then M.traceu "evalint" "apron query %a -> %a\n" d_exp e ID.pretty r;
-      r
-    | Queries.MustBeEqual (exp1,exp2) ->
-      let exp = (BinOp (Cil.Eq, exp1, exp2, TInt (IInt, []))) in
-      let is_eq = eval_int exp in
-      Option.default false (ID.to_bool is_eq)
-    | Queries.MayBeEqual (exp1,exp2) ->
-      let exp = (BinOp (Cil.Eq, exp1, exp2, TInt (IInt, []))) in
-      let is_neq = eval_int exp in
-      Option.default true (ID.to_bool is_neq)
-    | Queries.MayBeLess (exp1, exp2) ->
-      let exp = (BinOp (Cil.Lt, exp1, exp2, TInt (IInt, []))) in
-      let is_lt = eval_int exp in
-      Option.default true (ID.to_bool is_lt)
-    | _ -> Result.top q
-
-
-  (* Thread transfer functions. *)
-
-  let threadenter ctx lval f args =
-    let st = ctx.local in
-    match Cilfacade.find_varinfo_fundec f with
-    | fd ->
-      (* TODO: HACK: Simulate enter_multithreaded for first entering thread to publish global inits before analyzing thread.
-        Otherwise thread is analyzed with no global inits, reading globals gives bot, which turns into top, which might get published...
-        sync `Thread doesn't help us here, it's not specific to entering multithreaded mode.
-        EnterMultithreaded events only execute after threadenter and threadspawn. *)
-      if not (ThreadFlag.is_multi (Analyses.ask_of_ctx ctx)) then
-        ignore (Priv.enter_multithreaded (Analyses.ask_of_ctx ctx) ctx.global ctx.sideg st);
-      let st' = Priv.threadenter (Analyses.ask_of_ctx ctx) ctx.global st in
-      let arg_vars =
-        fd.sformals
-        |> List.filter AD.varinfo_tracked
-        |> List.map V.arg
-      in
-      let new_apr = AD.add_vars st'.apr arg_vars in
-      [{st' with apr = new_apr}]
-    | exception Not_found ->
-      (* Unknown functions *)
-      (* TODO: do something like base? *)
-      failwith "apron.threadenter: unknown function"
-
-  let threadspawn ctx lval f args fctx =
-    ctx.local
-
-  let event ctx e aprx =
-    let st = ctx.local in
-    match e with
-    | Events.Lock addr when ThreadFlag.is_multi (Analyses.ask_of_ctx ctx) -> (* TODO: is this condition sound? *)
-      Priv.lock (Analyses.ask_of_ctx aprx) aprx.global st addr
-    | Events.Unlock addr when ThreadFlag.is_multi (Analyses.ask_of_ctx ctx) -> (* TODO: is this condition sound? *)
-      Priv.unlock (Analyses.ask_of_ctx aprx) aprx.global aprx.sideg st addr
-    (* No need to handle escape because escaped variables are always referenced but this analysis only considers unreferenced variables. *)
-    | Events.EnterMultiThreaded ->
-      Priv.enter_multithreaded (Analyses.ask_of_ctx aprx) aprx.global aprx.sideg st
-    | _ ->
-      st
-
-  let sync ctx reason =
-    (* After the solver is finished, store the results (for later comparison) *)
-    if !GU.postsolving then begin
-      let old_value = RH.find_default results ctx.node (AD.bot ()) in
-      let new_value = AD.join old_value ctx.local.apr in
-      RH.replace results ctx.node new_value;
-    end;
-    Priv.sync (Analyses.ask_of_ctx ctx) ctx.global ctx.sideg ctx.local (reason :> [`Normal | `Join | `Return | `Init | `Thread])
-
-  let init marshal =
-    Priv.init ()
-
-  module OctApron = ApronPrecCompareUtil.OctagonD
-  let store_data file =
-    let convert (m: AD.t RH.t): OctApron.t RH.t =
-      let convert_single (a: AD.t): OctApron.t =
-        let generator = AD.to_lincons_array a in
-        OctApron.of_lincons_array generator
-      in
-      RH.map (fun _ -> convert_single) m
-    in
-    let post_process m =
-      let m = convert m in
-      RH.map (fun _ v -> OctApron.marshal v) m
-    in
-    let results = post_process results in
-    let name = name () ^ "(domain: " ^ (AD.Man.name ()) ^ ", privatization: " ^ (Priv.name ()) ^ ")" in
-    let results: ApronPrecCompareUtil.dump = {marshalled = results; name } in
-    Serialize.marshal results file
-
-  let finalize () =
-    let file = GobConfig.get_string "exp.apron.prec-dump" in
-    if file <> "" then begin
-      store_data file
-    end;
-    Priv.finalize ()
-end
 open RelationAnalysis
+
+module ExtendedSpecFunctor (CPriv: ApronPriv.SharedS) (RD: RelationDomain.RD) : Analyses.MCPSpec =
+struct
+module OctApron = ApronPrecCompareUtil.OctagonD
+include RelationAnalysis.SpecFunctor (CPriv) (RD) (ApronPrecCompareUtil.Util)
+module AD = ApronDomain.D2Complete(OctApron.Man)
+module Priv = CPriv (AD)
+module PCU = ApronPrecCompareUtil.Util(OctApron)
+
+let results = PCU.RH.create 103
+
+let init marshal =
+  Priv.init ()
+
+let store_data file =
+  let convert (m: AD.t PCU.RH.t): OctApron.t PCU.RH.t =
+    let convert_single (a: AD.t): OctApron.t =
+      let generator = AD.to_lincons_array a in
+      OctApron.of_lincons_array generator
+    in
+    PCU.RH.map (fun _ -> convert_single) m
+  in
+  let post_process m =
+    let m = convert m in
+    PCU.RH.map (fun _ v -> OctApron.marshal v) m
+  in
+  let results = post_process results in
+  let name = name () ^ "(domain: " ^ (AD.name ()) ^ ", privatization: " ^ (Priv.name ()) ^ ")" in
+  let results: PCU.dump = {marshalled = results; name } in
+  Serialize.marshal results file
+
+
+end
+
 let spec_module: (module MCPSpec) Lazy.t =
   lazy (
     let open ApronDomain in
@@ -474,7 +342,7 @@ let spec_module: (module MCPSpec) Lazy.t =
         module D2 = AD
       end in
     let module Priv = (val ApronPriv.get_priv ()) in
-    let module Spec = SpecFunctor (Priv) (RD) in
+    let module Spec = ExtendedSpecFunctor (Priv) (RD) in
     (module Spec)
   )
 

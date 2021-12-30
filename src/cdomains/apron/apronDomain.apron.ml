@@ -741,8 +741,6 @@ sig
   val eval_int : t -> exp -> IntDomain.IntDomTuple.t
 end
 
-
-
 module D2Complete (Man: Manager)=
 struct
   type var = EnvDomain.Var.t

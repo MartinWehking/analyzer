@@ -56,6 +56,15 @@ struct
   let name () = "Polyhedra"
 end
 
+module AffEqManager =
+struct
+  (** Affine equalities in apron used for comparison with our own implementation *)
+  type mt = Polka.equalities Polka.t
+  type t = mt Manager.t
+  let mgr = Polka.manager_alloc_equalities ()
+  let name () = "ApronAffEq"
+end
+
 (** Manager for the Box domain, i.e. an interval domain.
     For Documentation for the domain see: https://antoinemine.github.io/Apron/doc/api/ocaml/Box.html*)
 module IntervalManager =
@@ -71,7 +80,8 @@ let manager =
     let options =
       ["octagon", (module OctagonManager: Manager);
        "interval", (module IntervalManager: Manager);
-       "polyhedra", (module PolyhedraManager: Manager)]
+       "polyhedra", (module PolyhedraManager: Manager);
+       "apronaffeq", (module AffEqManager: Manager)]
     in
     let domain = (GobConfig.get_string "ana.apron.domain") in
     match List.assoc_opt domain options with
@@ -141,14 +151,12 @@ struct
 
   let copy = A.copy Man.mgr
 
+  let vars d = vars (A.env d)
+
   let vars_as_array d =
     let ivs, fvs = Environment.vars (A.env d) in
     assert (Array.length fvs = 0); (* shouldn't ever contain floats *)
     ivs
-
-  let vars d =
-    let ivs = vars_as_array d in
-    List.of_enum (Array.enum ivs)
 
   (* marshal type: Abstract0.t and an array of var names *)
   type marshal = Man.mt Abstract0.t * string array
@@ -221,19 +229,19 @@ struct
     forget_vars_with nd vs;
     nd
 
-  let assign_exp_with nd v e =
-    match Convert.texpr1_of_cil_exp nd (A.env nd) e with
+  let assign_exp_with nd v e ov =
+    match Convert.texpr1_of_cil_exp nd (A.env nd) ov e with
     | texpr1 ->
       A.assign_texpr_with Man.mgr nd v texpr1 None
     | exception Convert.Unsupported_CilExp ->
       forget_vars_with nd [v]
 
-  let assign_exp d v e =
+  let assign_exp d v e ov =
     let nd = copy d in
-    assign_exp_with nd v e;
+    assign_exp_with nd v ov e;
     nd
 
-  let assign_exp_parallel_with nd ves =
+  let assign_exp_parallel_with nd ves ov =
     (* TODO: non-_with version? *)
     let env = A.env nd in
     (* partition assigns with supported and unsupported exps *)
@@ -241,7 +249,7 @@ struct
       ves
       |> List.enum
       |> Enum.map (Tuple2.map2 (fun e ->
-          match Convert.texpr1_of_cil_exp nd env e with
+          match Convert.texpr1_of_cil_exp nd env ov e with
           | texpr1 -> Some texpr1
           | exception Convert.Unsupported_CilExp -> None
         ))
@@ -302,19 +310,19 @@ struct
     in
     A.assign_texpr_array Man.mgr d vs texpr1s None
 
-  let substitute_exp_with nd v e =
-    match Convert.texpr1_of_cil_exp nd (A.env nd) e with
+  let substitute_exp_with nd v ov e =
+    match Convert.texpr1_of_cil_exp nd (A.env nd) ov e with
     | texpr1 ->
       A.substitute_texpr_with Man.mgr nd v texpr1 None
     | exception Convert.Unsupported_CilExp ->
       forget_vars_with nd [v]
 
-  let substitute_exp d v e =
+  let substitute_exp d v e ov =
     let nd = copy d in
-    substitute_exp_with nd v e;
+    substitute_exp_with nd v e ov;
     nd
 
-  let substitute_exp_parallel_with nd ves =
+  let substitute_exp_parallel_with nd ves ov =
     (* TODO: non-_with version? *)
     let env = A.env nd in
     (* partition substitutes with supported and unsupported exps *)
@@ -322,7 +330,7 @@ struct
       ves
       |> List.enum
       |> Enum.map (Tuple2.map2 (fun e ->
-          match Convert.texpr1_of_cil_exp nd env e with
+          match Convert.texpr1_of_cil_exp nd env ov e with
           | texpr1 -> Some texpr1
           | exception Convert.Unsupported_CilExp -> None
         ))
@@ -439,20 +447,20 @@ struct
     | _ -> false
 
   (** Assert a constraint expression. *)
-  let rec assert_cons d e negate =
+  let rec assert_cons d e negate no_ov =
     match e with
     (* Apron doesn't properly meet with DISEQ constraints: https://github.com/antoinemine/apron/issues/37.
        Join Gt and Lt versions instead. *)
     | BinOp (Ne, lhs, rhs, intType) when not negate ->
-      let assert_gt = assert_cons d (BinOp (Gt, lhs, rhs, intType)) negate in
-      let assert_lt = assert_cons d (BinOp (Lt, lhs, rhs, intType)) negate in
+      let assert_gt = assert_cons d (BinOp (Gt, lhs, rhs, intType)) negate no_ov in
+      let assert_lt = assert_cons d (BinOp (Lt, lhs, rhs, intType)) negate no_ov in
       join assert_gt assert_lt
     | BinOp (Eq, lhs, rhs, intType) when negate ->
-      let assert_gt = assert_cons d (BinOp (Gt, lhs, rhs, intType)) (not negate) in
-      let assert_lt = assert_cons d (BinOp (Lt, lhs, rhs, intType)) (not negate) in
+      let assert_gt = assert_cons d (BinOp (Gt, lhs, rhs, intType)) (not negate) no_ov in
+      let assert_lt = assert_cons d (BinOp (Lt, lhs, rhs, intType)) (not negate) no_ov in
       join assert_gt assert_lt
     | _ ->
-      begin match Convert.tcons1_of_cil_exp d (A.env d) e negate with
+      begin match Convert.tcons1_of_cil_exp d (A.env d) e negate no_ov with
         | tcons1 ->
           meet_tcons d tcons1
         | exception Convert.Unsupported_CilExp ->
@@ -460,7 +468,7 @@ struct
       end
 
   (** Assert any expression. *)
-  let assert_inv d e negate =
+  let assert_inv d e negate no_ov =
     let e' =
       if exp_is_cons e then
         e
@@ -468,19 +476,19 @@ struct
         (* convert non-constraint expression, such that we assert(e != 0) *)
         BinOp (Ne, e, zero, intType)
     in
-    assert_cons d e' negate
+    assert_cons d e' negate no_ov
 
   let check_assert d e =
-    if is_bot_env (assert_inv d e false) then
+    if is_bot_env (assert_inv d e false false) then
       `False
-    else if is_bot_env (assert_inv d e true) then
+    else if is_bot_env (assert_inv d e true false) then
       `True
     else
       `Top
 
   (** Evaluate non-constraint expression as interval. *)
   let eval_interval_expr d e =
-    match Convert.texpr1_of_cil_exp d (A.env d) e with
+    match Convert.texpr1_of_cil_exp d (A.env d) e false with
     | texpr1 ->
       SBounds.bound_texpr d texpr1
     | exception Convert.Unsupported_CilExp ->

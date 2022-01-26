@@ -149,6 +149,8 @@ struct
 
   type t = Man.mt A.t
 
+  let env t = A.env t
+
   let copy = A.copy Man.mgr
 
   let vars d = vars (A.env d)
@@ -357,7 +359,7 @@ struct
     let texpr1 = Texpr1.of_expr (A.env nd) (Var v') in
     A.substitute_texpr_with Man.mgr nd v texpr1 None
 
-  let meet_tcons d tcons1 =
+  let meet_with_tcons d tcons1 =
     let earray = Tcons1.array_make (A.env d) 1 in
     Tcons1.array_set earray 0 tcons1;
     A.meet_tcons_array Man.mgr d earray
@@ -438,13 +440,7 @@ struct
   include AOps (Tracked) (Man)
 
   include Tracked
-  module SBounds = Bounds(Man)
-
-  let exp_is_cons = function
-    (* constraint *)
-    | BinOp ((Lt | Gt | Le | Ge | Eq | Ne), _, _, _) -> true
-    (* expression *)
-    | _ -> false
+  module Bounds = Bounds(Man)
 
   (** Assert a constraint expression. *)
   let rec assert_cons d e negate no_ov =
@@ -462,53 +458,10 @@ struct
     | _ ->
       begin match Convert.tcons1_of_cil_exp d (A.env d) e negate no_ov with
         | tcons1 ->
-          meet_tcons d tcons1
+          meet_with_tcons d tcons1
         | exception Convert.Unsupported_CilExp ->
           d
       end
-
-  (** Assert any expression. *)
-  let assert_inv d e negate no_ov =
-    let e' =
-      if exp_is_cons e then
-        e
-      else
-        (* convert non-constraint expression, such that we assert(e != 0) *)
-        BinOp (Ne, e, zero, intType)
-    in
-    assert_cons d e' negate no_ov
-
-  let check_assert d e =
-    if is_bot_env (assert_inv d e false false) then
-      `False
-    else if is_bot_env (assert_inv d e true false) then
-      `True
-    else
-      `Top
-
-  (** Evaluate non-constraint expression as interval. *)
-  let eval_interval_expr d e =
-    match Convert.texpr1_of_cil_exp d (A.env d) e false with
-    | texpr1 ->
-      SBounds.bound_texpr d texpr1
-    | exception Convert.Unsupported_CilExp ->
-      (None, None)
-
-  (** Evaluate constraint or non-constraint expression as integer. *)
-  let eval_int d e =
-    let module ID = Queries.ID in
-    let ik = Cilfacade.get_ikind_exp e in
-    if exp_is_cons e then
-      match check_assert d e with
-      | `True -> ID.of_bool ik true
-      | `False -> ID.of_bool ik false
-      | `Top -> ID.top ()
-    else
-      match eval_interval_expr d e with
-      | (Some min, Some max) -> ID.of_interval ik (min, max)
-      | (Some min, None) -> ID.starting ik min
-      | (None, Some max) -> ID.ending ik max
-      | (None, None) -> ID.top ()
 end
 
 
@@ -749,7 +702,7 @@ sig
   val eval_int : t -> exp -> IntDomain.IntDomTuple.t
 end
 
-module D2Complete (Man: Manager)=
+module D2Complete (Man: Manager) =
 struct
   type var = EnvDomain.Var.t
   type lconsarray = Lincons1.earray
@@ -757,7 +710,17 @@ struct
   module Man = Man
 end
 
+module AD2Complete (Man: Manager) = (*ToDo Improve Module structure...*)
+struct
+include DWithOps (Man) (DHetero (Man))
+include D2Complete (Man)
+include EnvDomain.AssertionModule (D2Complete (Man))
+type var = EnvDomain.Var.t
+type lconsarray = Lincons1.earray
+module Man = Man
+end
+
 module D2 (Man: Manager): (RelD2 with type var = Var.t) =
 struct
-include D2Complete(Man)
+include AD2Complete(Man)
 end

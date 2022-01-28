@@ -294,11 +294,11 @@ struct
     in
     A.assign_texpr_array_with Man.mgr nd vs texpr1s None
 
-    let assign_var_parallel d vv's =
-      (* TODO: non-_with version? *)
-      let nd = copy d in
-      assign_var_parallel_with nd vv's;
-      nd
+  let assign_var_parallel d vv's =
+    (* TODO: non-_with version? *)
+    let nd = copy d in
+    assign_var_parallel_with nd vv's;
+    nd
 
   let assign_var_parallel' d vs v's = (* unpaired parallel assigns *)
     (* TODO: _with version? *)
@@ -501,7 +501,7 @@ struct
     if is_top x then y else
     if is_top y then x else
       A.meet Man.mgr x y
-      (* TODO: return lifted bot if different environments? and warn? *)
+  (* TODO: return lifted bot if different environments? and warn? *)
 
   let widen x y =
     if is_bot x then
@@ -510,7 +510,7 @@ struct
       x (* TODO: is this right? *)
     else
       A.widening (Man.mgr) x y
-      (* TODO: return lifted top if different environments? and warn? *)
+  (* TODO: return lifted top if different environments? and warn? *)
 
   let narrow = meet
 
@@ -712,15 +712,15 @@ end
 
 module AD2Complete (Man: Manager) = (*ToDo Improve Module structure...*)
 struct
-include DWithOps (Man) (DHetero (Man))
-include D2Complete (Man)
-include EnvDomain.AssertionModule (D2Complete (Man))
-type var = EnvDomain.Var.t
-type lconsarray = Lincons1.earray
-module Man = Man
+  include DWithOps (Man) (DHetero (Man))
+  include D2Complete (Man)
+  include EnvDomain.AssertionModule (D2Complete (Man))
+  type var = EnvDomain.Var.t
+  type lconsarray = Lincons1.earray
+  module Man = Man
 end
 
 module D2 (Man: Manager): (RelD2 with type var = Var.t) =
 struct
-include AD2Complete(Man)
+  include AD2Complete(Man)
 end

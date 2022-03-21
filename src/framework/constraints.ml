@@ -498,7 +498,6 @@ struct
       ; spawn   = spawn
       ; split   = (fun (d:D.t) es -> assert (List.is_empty es); r := d::!r)
       ; sideg   = sideg
-      ; assign = (fun ?name _    -> failwith "Cannot \"assign\" in common context.")
       }
     and spawn lval f args =
       (* TODO: adjust ctx node/edge? *)
@@ -718,7 +717,7 @@ struct
         | Some scc when NodeH.mem scc.prev v && NodeH.length scc.prev = 1 ->
           (* Limited to loops with only one entry node. Otherwise unsound as is. *)
           (* TODO: Is it possible to do soundly for multi-entry loops? *)
-          let stricts = NodeH.find_all scc.prev v in
+          let stricts = NodeH.find_default scc.prev v [] in
           let xs_stricts = List.map tf' stricts in
           if List.for_all S.D.is_bot xs_stricts then
             S.D.bot ()

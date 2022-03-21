@@ -16,11 +16,21 @@ module M = Messages
     - C API docs PDF (alternative mathematical descriptions): https://antoinemine.github.io/Apron/doc/api/c/apron.pdf
     - heterogeneous environments: https://link.springer.com/chapter/10.1007%2F978-3-030-17184-1_26 (Section 4.1) *)
 
-let widening_thresholds_apron = lazy (
+let widening_thresholds_apron = ResettableLazy.from_fun (fun () ->
   let t = WideningThresholds.thresholds_incl_mul2 () in
   let r = List.map (fun x -> Apron.Scalar.of_mpqf @@ Mpqf.of_mpz @@ Z_mlgmpidl.mpz_of_z x) t in
   Array.of_list r
 )
+
+let reset_lazy () =
+  ResettableLazy.reset widening_thresholds_apron
+
+module Var =
+struct
+  include Var
+
+  let equal x y = Var.compare x y = 0
+end
 
 module type Manager =
 sig
@@ -461,6 +471,7 @@ struct
       let assert_gt = assert_cons d (BinOp (Gt, lhs, rhs, intType)) (not negate) ov in
       let assert_lt = assert_cons d (BinOp (Lt, lhs, rhs, intType)) (not negate) ov in
       join assert_gt assert_lt
+    | UnOp (LNot,e,_) -> assert_cons d e (not negate)
     | _ ->
       begin match Convert.tcons1_of_cil_exp d (A.env d) e negate no_ov with
         | tcons1 ->
@@ -675,7 +686,7 @@ struct
     if Environment.equal x_env y_env  then
       if GobConfig.get_bool "ana.apron.threshold_widening" && Oct.manager_is_oct Man.mgr then
         let octmgr = Oct.manager_to_oct Man.mgr in
-        let ts = Lazy.force widening_thresholds_apron in
+        let ts = ResettableLazy.force widening_thresholds_apron in
         let x_oct = Oct.Abstract1.to_oct x in
         let y_oct = Oct.Abstract1.to_oct y in
         let r = Oct.widening_thresholds octmgr (Abstract1.abstract0 x_oct) (Abstract1.abstract0 y_oct) ts in
@@ -705,7 +716,7 @@ sig
   val assert_inv : t -> exp -> bool -> t
   val check_assert : t -> exp -> [> `False | `Top | `True ]
   val eval_interval_expr : t -> exp -> Z.t option * Z.t option
-  val eval_int : t -> exp -> IntDomain.IntDomTuple.t
+  val eval_int : t -> exp -> Queries.ID.t
 end
 
 module D2Complete (Man: Manager) =

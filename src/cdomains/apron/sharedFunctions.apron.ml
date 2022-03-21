@@ -209,9 +209,10 @@ struct
 
   include Tracked
 
-  let exp_is_cons = function
+  let rec exp_is_cons = function
     (* constraint *)
     | BinOp ((Lt | Gt | Le | Ge | Eq | Ne), _, _, _) -> true
+    | UnOp (LNot,e,_) -> exp_is_cons e
     (* expression *)
     | _ -> false
 
@@ -249,11 +250,11 @@ struct
       match check_asserts d e no_ov with
       | `True -> ID.of_bool ik true
       | `False -> ID.of_bool ik false
-      | `Top -> ID.top ()
+      | `Top -> ID.top_of ik
     else
       match eval_interval_expr d e with
       | (Some min, Some max) -> ID.of_interval ik (min, max)
       | (Some min, None) -> ID.starting ik min
       | (None, Some max) -> ID.ending ik max
-      | (None, None) -> ID.top ()
+      | (None, None) -> ID.top_of ik
 end

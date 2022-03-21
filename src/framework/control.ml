@@ -194,6 +194,8 @@ struct
   (** The main function to preform the selected analyses. *)
   let analyze (file: file) (startfuns, exitfuns, otherfuns: Analyses.fundecs) =
 
+    Goblintutil.should_warn := false; (* reset for server mode *)
+
     (* exctract global xml from result *)
     let make_global_fast_xml f g =
       let open Printf in
@@ -250,7 +252,6 @@ struct
         ; spawn   = (fun _ -> failwith "Global initializers should never spawn threads. What is going on?")
         ; split   = (fun _ -> failwith "Global initializers trying to split paths.")
         ; sideg   = sideg
-        ; assign  = (fun ?name _ -> failwith "Global initializers trying to assign.")
         }
       in
       let edges = CfgTools.getGlobalInits file in
@@ -274,7 +275,11 @@ struct
               (try funs := Cilfacade.find_varinfo_fundec f :: !funs with Not_found -> ())
             | _ -> ()
           );
-          Spec.assign {ctx with local = st} lval exp
+          let res = Spec.assign {ctx with local = st} lval exp in
+          (* Needed for privatizations (e.g. None) that do not side immediately *)
+          let res' = Spec.sync {ctx with local = res} `Normal in
+          if M.tracing then M.trace "global_inits" "\t\t -> state:%a\n" Spec.D.pretty res;
+          res'
         | _                       -> failwith "Unsupported global initializer edge"
       in
       let with_externs = do_extern_inits ctx file in
@@ -348,7 +353,6 @@ struct
         ; spawn   = (fun _ -> failwith "Bug1: Using enter_func for toplevel functions with 'otherstate'.")
         ; split   = (fun _ -> failwith "Bug2: Using enter_func for toplevel functions with 'otherstate'.")
         ; sideg   = sideg
-        ; assign  = (fun ?name _ -> failwith "Bug4: Using enter_func for toplevel functions with 'otherstate'.")
         }
       in
       let args = List.map (fun x -> MyCFG.unknown_exp) fd.sformals in
@@ -383,7 +387,6 @@ struct
         ; spawn   = (fun _ -> failwith "Bug1: Using enter_func for toplevel functions with 'otherstate'.")
         ; split   = (fun _ -> failwith "Bug2: Using enter_func for toplevel functions with 'otherstate'.")
         ; sideg   = sideg
-        ; assign  = (fun ?name _ -> failwith "Bug4: Using enter_func for toplevel functions with 'otherstate'.")
         }
       in
       (* TODO: don't hd *)
@@ -469,7 +472,7 @@ struct
             if get_bool "dbg.verbose" then (
               print_endline ("Saving the current configuration to " ^ config ^ ", meta-data about this run to " ^ meta ^ ", and solver statistics to " ^ solver_stats);
             );
-            ignore @@ GU.create_dir (save_run); (* ensure the directory exists *)
+            GobSys.mkdir_or_exists save_run;
             GobConfig.write_file config;
             let module Meta = struct
                 type t = { command : string; version: string; timestamp : float; localtime : string } [@@deriving to_yojson]
@@ -574,7 +577,6 @@ struct
             ; spawn  = (fun v d    -> failwith "Cannot \"spawn\" in query context.")
             ; split  = (fun d es   -> failwith "Cannot \"split\" in query context.")
             ; sideg  = (fun v g    -> failwith "Cannot \"split\" in query context.")
-            ; assign = (fun ?name _ -> failwith "Cannot \"assign\" in query context.")
             }
           in
           Spec.query ctx
@@ -629,7 +631,6 @@ struct
         ; spawn  = (fun v d    -> failwith "Cannot \"spawn\" in query context.")
         ; split  = (fun d es   -> failwith "Cannot \"split\" in query context.")
         ; sideg  = (fun v g    -> failwith "Cannot \"split\" in query context.")
-        ; assign = (fun ?name _ -> failwith "Cannot \"assign\" in query context.")
         }
       in
       Spec.query ctx (WarnGlobal (Obj.repr g))

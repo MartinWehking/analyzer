@@ -114,7 +114,7 @@ struct
     | Index (New  ,p) -> fprintf ch "[*]%a"    print_path' p
 
   (** Path printing where you can ignore the first dot. *)
-  let print_path ch = function
+  let[@warning "-unused-value-declaration"] print_path ch = function
     | Select (s,p) -> fprintf ch "%s%a" s print_path' p
     | pth -> print_path' ch pth
 
@@ -178,11 +178,19 @@ struct
   let rec get_value o pth =
     match o, pth with
     | o, Here -> o
-    | `Assoc m, Select (key,pth) -> begin
+    | `Assoc m, Select (key,pth) ->
+      begin
         try get_value (List.assoc key m) pth
-        with Not_found -> raise ConfTypeError end
-    | `List a, Index (Int i, pth) -> get_value (List.at a i) pth
-    | _ -> raise ConfTypeError
+        with Not_found ->
+        try get_value (List.assoc Options.defaults_additional_field m) pth (* if schema specifies additionalProperties, then use the default from that *)
+        with Not_found -> raise ConfTypeError
+      end
+    | `List a, Index (Int i, pth) ->
+      begin
+        try get_value (List.at a i) pth
+        with Invalid_argument _ -> raise ConfTypeError
+      end
+    | _, _ -> raise ConfTypeError
 
   (** Recursively create the value for some new path. *)
   let rec create_new v = function
@@ -219,20 +227,14 @@ struct
       match o, pth with
       | `Assoc m, Select (key,pth) ->
         let rec modify = function
-          | [] -> raise Not_found
+          | [] ->
+            [(key, create_new v pth)] (* create new key, validated by schema *)
           | (key', v') :: kvs when key' = key ->
             (key, set_value v v' pth) :: kvs
           | (key', v') :: kvs ->
             (key', v') :: modify kvs
         in
-        begin try `Assoc (modify m)
-          with Not_found ->
-            (* TODO: allow unknown paths to create subobjects, will be validated against schema anyway *)
-            (* if !build_config then
-                 `Assoc (m @ [(key, create_new v pth)])
-               else *)
-            raise @@ ConfigError ("Unknown path "^ (sprintf2 "%a" print_path orig_pth))
-        end
+        `Assoc (modify m)
       | `List a, Index (Int i, pth) ->
         `List (List.modify_at i (fun o -> set_value v o pth) a)
       | `List a, Index (App, pth) ->
@@ -268,7 +270,7 @@ struct
       let st, x =
         let g st = st, get_value !json_conf (parse_path st) in
         try g ("phases["^ string_of_int !phase ^"]."^st) (* try to find value in config for current phase first *)
-        with _ -> g st (* do global lookup if undefined *)
+        with ConfTypeError -> g st (* do global lookup if undefined *)
       in
       if tracing then trace "conf-reads" "Reading '%s', it is %a.\n" st GobYojson.pretty x;
       try f x

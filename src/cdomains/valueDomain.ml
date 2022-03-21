@@ -144,14 +144,14 @@ struct
     match t with
     | t when is_mutex_type t -> `Top
     | TInt (ik,_) -> `Int (ID.top_of ik)
-    | TPtr _ -> `Address (if get_bool "exp.uninit-ptr-safe" then AD.(join null_ptr safe_ptr) else AD.top_ptr)
+    | TPtr _ -> `Address AD.top_ptr
     | TComp ({cstruct=true; _} as ci,_) -> `Struct (Structs.create (fun fd -> init_value fd.ftype) ci)
     | TComp ({cstruct=false; _},_) -> `Union (Unions.top ())
     | TArray (ai, None, _) ->
-      `Array (CArrays.make (IndexDomain.bot ())  (if get_bool "ana.base.partition-arrays.enabled" then (init_value ai) else (bot_value ai)))
+      `Array (CArrays.make (IndexDomain.bot ())  (if (get_string "ana.base.arrays.domain"="partitioned" || get_string "ana.base.arrays.domain"="unroll") then (init_value ai) else (bot_value ai)))
     | TArray (ai, Some exp, _) ->
       let l = BatOption.map Cilint.big_int_of_cilint (Cil.getInteger (Cil.constFold true exp)) in
-      `Array (CArrays.make (BatOption.map_default (IndexDomain.of_int (Cilfacade.ptrdiff_ikind ())) (IndexDomain.bot ()) l) (if get_bool "ana.base.partition-arrays.enabled" then (init_value ai) else (bot_value ai)))
+      `Array (CArrays.make (BatOption.map_default (IndexDomain.of_int (Cilfacade.ptrdiff_ikind ())) (IndexDomain.bot ()) l) (if (get_string "ana.base.arrays.domain"="partitioned" || get_string "ana.base.arrays.domain"="unroll") then (init_value ai) else (bot_value ai)))
     (* | t when is_thread_type t -> `Thread (ConcDomain.ThreadSet.empty ()) *)
     | TNamed ({ttype=t; _}, _) -> init_value t
     | _ -> `Top
@@ -163,10 +163,10 @@ struct
     | TComp ({cstruct=true; _} as ci,_) -> `Struct (Structs.create (fun fd -> top_value fd.ftype) ci)
     | TComp ({cstruct=false; _},_) -> `Union (Unions.top ())
     | TArray (ai, None, _) ->
-      `Array (CArrays.make (IndexDomain.top ()) (if get_bool "ana.base.partition-arrays.enabled" then (top_value ai) else (bot_value ai)))
+      `Array (CArrays.make (IndexDomain.top ()) (if (get_string "ana.base.arrays.domain"="partitioned" || get_string "ana.base.arrays.domain"="unroll") then (top_value ai) else (bot_value ai)))
     | TArray (ai, Some exp, _) ->
       let l = BatOption.map Cilint.big_int_of_cilint (Cil.getInteger (Cil.constFold true exp)) in
-      `Array (CArrays.make (BatOption.map_default (IndexDomain.of_int (Cilfacade.ptrdiff_ikind ())) (IndexDomain.top_of (Cilfacade.ptrdiff_ikind ())) l) (if get_bool "ana.base.partition-arrays.enabled" then (top_value ai) else (bot_value ai)))
+      `Array (CArrays.make (BatOption.map_default (IndexDomain.of_int (Cilfacade.ptrdiff_ikind ())) (IndexDomain.top_of (Cilfacade.ptrdiff_ikind ())) l) (if (get_string "ana.base.arrays.domain"="partitioned" || get_string "ana.base.arrays.domain"="unroll") then (top_value ai) else (bot_value ai)))
     | TNamed ({ttype=t; _}, _) -> top_value t
     | _ -> `Top
 
@@ -394,16 +394,17 @@ struct
               | _ -> log_top __POS__; AD.top_ptr
             )
         | TArray (ta, l, _) -> (* TODO, why is the length exp option? *)
-          `Array (match v, Prelude.try_opt Cil.lenOfArray l with
-              | `Array x, _ (* Some l' when Some l' = CArrays.length x *) -> x (* TODO handle casts between different sizes? *)
+          (* TODO handle casts between different sizes? *)
+          `Array (match v with
+              | `Array x -> x
               | _ -> log_top __POS__; CArrays.top ()
             )
         | TComp (ci,_) -> (* struct/union *)
           (* rather clumsy, but our abstract values don't keep their type *)
           let same_struct x = (* check if both have the same parent *)
-            (* compinfo is cyclic, so we only check the name *)
-            try compFullName (List.hd (Structs.keys x)).fcomp = compFullName (List.hd ci.cfields).fcomp
-            with _ -> false (* can't say if struct is empty *)
+            match Structs.keys x, ci.cfields with
+            | k :: _, f :: _ -> compFullName k.fcomp = compFullName f.fcomp (* compinfo is cyclic, so we only check the name *)
+            | _, _ -> false (* can't say if struct is empty *)
           in
           (* 1. casting between structs of different type does not work
            * 2. dereferencing a casted pointer works, but is undefined behavior because of the strict aliasing rule (compiler assumes that pointers of different type can never point to the same location)
@@ -765,22 +766,24 @@ struct
           match v with
           | Some (v') ->
             begin
-              (* This should mean the entire expression we have here is a pointer into the array *)
-              if Cil.isArrayType (Cilfacade.typeOfLval v') then
-                let expr = ptr in
-                let start_of_array = StartOf v' in
-                let start_type = typeSigWithoutArraylen (Cilfacade.typeOf start_of_array) in
-                let expr_type = typeSigWithoutArraylen (Cilfacade.typeOf ptr) in
-                (* Comparing types for structural equality is incorrect here, use typeSig *)
-                (* as explained at https://people.eecs.berkeley.edu/~necula/cil/api/Cil.html#TYPEtyp *)
-                if start_type = expr_type then
-                  `Lifted (equiv_expr expr v')
+              try
+                (* This should mean the entire expression we have here is a pointer into the array *)
+                if Cil.isArrayType (Cilfacade.typeOfLval v') then
+                  let expr = ptr in
+                  let start_of_array = StartOf v' in
+                  let start_type = typeSigWithoutArraylen (Cilfacade.typeOf start_of_array) in
+                  let expr_type = typeSigWithoutArraylen (Cilfacade.typeOf ptr) in
+                  (* Comparing types for structural equality is incorrect here, use typeSig *)
+                  (* as explained at https://people.eecs.berkeley.edu/~necula/cil/api/Cil.html#TYPEtyp *)
+                  if start_type = expr_type then
+                    `Lifted (equiv_expr expr v')
+                  else
+                    (* If types do not agree here, this means that we were looking at pointers that *)
+                    (* contain more than one array access. Those are not supported. *)
+                    ExpDomain.top ()
                 else
-                  (* If types do not agree here, this means that we were looking at pointers that *)
-                  (* contain more than one array access. Those are not supported. *)
                   ExpDomain.top ()
-              else
-                ExpDomain.top ()
+              with (Cilfacade.TypeOfError _) -> ExpDomain.top ()
             end
           | _ ->
             ExpDomain.top ()
@@ -860,7 +863,7 @@ struct
               begin
                 do_eval_offset ask f x offs exp l' o' v t (* this used to be `blob `address -> we ignore the index *)
               end
-            | x when Goblintutil.opt_predicate (BI.equal (BI.zero)) (IndexDomain.to_int idx) -> eval_offset ask f x offs exp v t
+            | x when GobOption.exists (BI.equal (BI.zero)) (IndexDomain.to_int idx) -> eval_offset ask f x offs exp v t
             | `Top -> M.debug "Trying to read an index, but the array is unknown"; top ()
             | _ -> M.warn "Trying to read an index, but was not given an array (%a)" pretty x; top ()
           end
@@ -998,7 +1001,7 @@ struct
               let new_array_value = CArrays.update_length newl new_array_value in
               `Array new_array_value
             | `Top -> M.warn "Trying to update an index, but the array is unknown"; top ()
-            | x when Goblintutil.opt_predicate (BI.equal BI.zero) (IndexDomain.to_int idx) -> do_update_offset ask x offs value exp l' o' v t
+            | x when GobOption.exists (BI.equal BI.zero) (IndexDomain.to_int idx) -> do_update_offset ask x offs value exp l' o' v t
             | _ -> M.warn "Trying to update an index, but was not given an array(%a)" pretty x; top ()
           end
       in mu result

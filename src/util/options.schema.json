@@ -783,6 +783,13 @@
           },
           "additionalProperties": false
         },
+        "matrix": {
+          "title":  "ana.matrix",
+          "description": "Which matrix should be used for the affine equality analysis",
+          "type": "string",
+          "enum": ["list", "array"],
+          "default": "array"
+        },
         "apron": {
           "title": "ana.apron",
           "type": "object",

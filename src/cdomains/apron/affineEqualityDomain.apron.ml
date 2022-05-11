@@ -246,25 +246,22 @@ struct
       if s >= Matrix.num_cols a then a else
         let case_two a r col_b =
           let a_r = Matrix.get_row a r in
-          let mapping = Matrix.map2i_pt_with (fun i x y -> if i < r then
-                                                 Vector.map2_pt_with (fun u j -> u +: y *: j) x a_r else x) a col_b
+          let mapping = Matrix.map2_pt_with (fun x y -> Vector.map2_pt_with (fun u j -> u +: y *: j) x a_r) a col_b
           in Matrix.remove_row mapping r
         in
-        let case_three a b col_a col_b max =
+        let case_three a b col_a col_b r =
           let col_a, col_b = Vector.copy_pt_with col_a, Vector.copy_pt_with col_b in
-          let col_a, col_b = Vector.keep_vals col_a max, Vector.keep_vals col_b max in
-          if Vector.equal col_a col_b then (a, b, max) else
+          let col_a, col_b = Vector.keep_vals col_a r, Vector.keep_vals col_b r in
+          if Vector.equal col_a col_b then (a, b, r) else
             let a_rev, b_rev = Vector.rev_pt_with col_a,  Vector.rev_pt_with col_b in
             let i = Vector.find2i (fun x y -> x <> y) a_rev b_rev in
             let (x, y) = Vector.nth a_rev i, Vector.nth b_rev i in
-            let r, diff = Vector.length a_rev - (i + 1), x -: y  in
-            let a_r, b_r = Matrix.get_row a r, Matrix.get_row b r in
+            let r', diff = Vector.length a_rev - (i + 1), x -: y  in
+            let a_r, b_r = Matrix.get_row a r', Matrix.get_row b r' in
             let sub_col = Vector.rev_pt_with @@ Vector.map2_pt_with (fun x y -> x -: y) a_rev b_rev in
-            let multiply_by_t m t =
-              Matrix.map2i_pt_with (fun i' x c -> if i' <= max then let beta = c /: diff in
-                                       Vector.map2_pt_with (fun u j -> u -: (beta *: j)) x t else x) m sub_col
+            let multiply_by_t m t = Matrix.map2_pt_with (fun x c -> let beta = c /: diff in Vector.map2_pt_with (fun u j -> u -: (beta *: j)) x t) m sub_col
             in
-            Matrix.remove_row (multiply_by_t a a_r) r, Matrix.remove_row (multiply_by_t b b_r) r, (max - 1)
+            Matrix.remove_row (multiply_by_t a a_r) r', Matrix.remove_row (multiply_by_t b b_r) r', (r - 1)
         in
         let col_a, col_b = Matrix.get_col a s, Matrix.get_col b s in
         let nth_zero v i =  match Vector.nth v i with

@@ -136,6 +136,7 @@ module ListVector: AbstractVector =
       "["^list_str t^"\n"
 
     let equal v1 v2 =
+
       List.equal (=:) v1 v2
 
     let keep_vals v n =

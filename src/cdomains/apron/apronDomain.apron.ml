@@ -274,6 +274,14 @@ struct
     assign_exp_with nd v e ov;
     nd
 
+    let show (x:t) =
+      Format.asprintf "%a (env: %a)" A.print x (Environment.print: Format.formatter -> Environment.t -> unit) (A.env x)
+
+    let assign_exp t var exp no_ov =
+      let res = assign_exp t var exp no_ov in
+      if M.tracing then M.tracel "assign" "assign_exp t:\n %s \n var: %s \n exp: %s\n no_ov: %b -> \n %s\n"
+          (show t) (Var.to_string var) (Pretty.sprint ~width:1 (Cil.printExp Cil.defaultCilPrinter () exp)) (Lazy.force no_ov) (show res) ; res
+
   let assign_exp_parallel_with nd ves ov =
     (* TODO: non-_with version? *)
     let env = A.env nd in
@@ -309,6 +317,12 @@ struct
     A.assign_texpr_with Man.mgr nd v texpr1 None;
     nd
 
+    let assign_var_with t v v' =
+      let nd = copy t in
+      let res = assign_var_with nd v v' in
+      if M.tracing then M.tracel "var" "assign_var t:\n %s \n v: %s \n v': %s\n -> %s\n" (show t) (Var.to_string v) (Var.to_string v') (show res) ;
+      res
+
   let assign_var d v v' =
     let nd = copy d in
     assign_var_with nd v v'
@@ -326,10 +340,21 @@ struct
     A.assign_texpr_array_with Man.mgr nd vs texpr1s None;
     nd
 
+    let assign_var_parallel_pt_with t vv's =
+      let nd = copy t in
+      let res = assign_var_parallel_pt_with nd vv's in
+      if M.tracing then M.tracel "ops" "assign_var parallel: %s -> %s \n" (show t) (show res);
+      res
+
   let assign_var_parallel d vv's =
     (* TODO: non-_with version? *)
     let nd = copy d in
     assign_var_parallel_pt_with nd vv's
+
+    let assign_var_parallel t vv's =
+      let res = assign_var_parallel t vv's in
+      if M.tracing then M.tracel "ops" "assign_var parallel: %s -> %s \n" (show t) (show res);
+      res
 
   let assign_var_parallel' d vs v's = (* unpaired parallel assigns *)
     (* TODO: _with version? *)
@@ -355,6 +380,14 @@ struct
     let nd = copy d in
     substitute_exp_with nd v e ov;
     nd
+
+    let show (x:t) =
+      Format.asprintf "%a (env: %a)" A.print x (Environment.print: Format.formatter -> Environment.t -> unit) (A.env x)
+
+    let substitute_exp t var exp ov =
+      let res = substitute_exp t var exp ov
+      in if M.tracing then M.tracel "sub" "Substitute_expr t: \n %s \n var: %s \n exp: %s \n -> \n %s\n" (show t) (Var.to_string var) (Pretty.sprint ~width:1 (Cil.printExp Cil.defaultCilPrinter () exp)) (show res);
+      res
 
   let substitute_exp_parallel_with nd ves ov =
     (* TODO: non-_with version? *)
@@ -503,6 +536,10 @@ struct
         | exception Convert.Unsupported_CilExp ->
           d
       end
+
+      let assert_cons d e negate no_ov =
+        let res = assert_cons d e negate no_ov in
+        if M.tracing then M.tracel "assert_cons" "assert_cons d: %s  %s -> %s \n" (show d) (Pretty.sprint ~width:1 (Cil.printExp Cil.defaultCilPrinter () e)) (show res); res
 end
 
 
